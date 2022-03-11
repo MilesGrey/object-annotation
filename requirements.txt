@@ -1,0 +1,5 @@
+matplotlib>=3.5.1
+numpy>=1.22.0
+opencv-python>=4.5.5.62
+pandas>=1.4.1
+PyQt6~=6.2.3

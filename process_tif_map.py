@@ -20,7 +20,7 @@ class ImageTypeString(Enum):
 def process_probe_directories(
         probe_directory: Path,
 ):
-    folders = next(os.walk(probe_directory))[1]
+    folders = sorted(next(os.walk(probe_directory))[1])
     for folder in folders:
         try:
             tif_path = Path(glob.glob(f'{probe_directory}/{folder}/images/{folder}_map.tif')[0])
@@ -55,6 +55,9 @@ def crop_tif_map(
                 _build_crop_name(probe_directory.name, label_i, label_j, ImageTypeString.TIF)
             )
             existing_bounding_boxes.append(bounding_boxes)
+    crops.reverse()
+    crop_names.reverse()
+    existing_bounding_boxes.reverse()
     return crops, crop_names, existing_bounding_boxes
 
 
@@ -67,7 +70,7 @@ def _get_image_bounding_boxes(probe_directory, image_name):
     label_info['label'] = label_info['PollenSpecies']
     label_info['label'] = label_info['label'].where(label_info['PollenSpecies'] != '--', label_info['PredictedPollenSpecies'])
     label_info['label'] = label_info['label'].where(label_info['PollenSpecies'] != 'Y', label_info['PredictedPollenSpeciesLatin'])
-    return label_info[['bounding_boxes', 'label']].to_numpy()
+    return [[row[0].tolist(), row[1]] for row in label_info[['bounding_boxes', 'label']].to_numpy()]
 
 
 def _build_crop_name(

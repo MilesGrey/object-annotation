@@ -1,7 +1,11 @@
+import glob
 import json
+import os
 import sys
+from enum import Enum
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from PyQt6 import QtWidgets
 from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout, QDialogButtonBox, QLabel, QInputDialog, \
@@ -14,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib import patches
 from matplotlib.widgets import RectangleSelector
 
-from process_tif_map import process_probe_directories
+from process_tif_map import crop_tif_map
 
 POLLEN_CLASSES = [
     'Alnus',
@@ -62,6 +66,11 @@ POLLEN_CLASSES = [
 ]
 
 
+class BoxesType(Enum):
+    MANUAL = 'manual_boxes'
+    EXISTING = 'existing_boxes'
+
+
 class CloseDialog(QMessageBox):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -72,24 +81,33 @@ class CloseDialog(QMessageBox):
 
 
 class Window(QtWidgets.QWidget):
-    PROCESSED_FOLDERS_FILE_NAME = 'processed_folder.json'
+    SAVED_STATE_FILE_NAME = 'saved_state.json'
 
     def __init__(self, parent=None):
         super(Window, self).__init__(parent)
 
-        self.processing_directory = QFileDialog.getExistingDirectory(self)
+        self.current_probe_directory = None
+        self.current_crops = None
+        self.current_crop_names = None
+        self.current_existing_bounding_boxes = None
 
-        self.figure = plt.figure(figsize=(12.80, 9.60))
+        self.current_crop_index = 0
+        self.current_crop = None
+        self.current_crop_name = None
+        self.current_crop_existing_boxes = None
+        self.current_crop_new_boxes = None
+
+        self.internal_boxes = {}
+
+        self.processing_directory = QFileDialog.getExistingDirectory(self)
+        self.probe_directories = sorted(next(os.walk(self.processing_directory))[1])
+        self.load_state()
+
+        self.figure = plt.figure()
 
         self.canvas = FigureCanvas(self.figure)
 
-        self.image_generator = self.get_image_generator()
-        self.crop, self.crop_name, self.bounding_boxes, self.probe_directory_name = None, None, None, None
         self.ax = None
-        self.new_bounding_boxes = []
-        self.directory_label_info = pd.DataFrame()
-        self.processed_folders = self.load_processed_folders()
-
         self.header = QLabel('')
 
         NavigationToolbar.toolitems = [
@@ -101,38 +119,123 @@ class Window(QtWidgets.QWidget):
         ]
         self.toolbar = NavigationToolbar(self.canvas, self)
 
-        self.button = QPushButton('Next Image')
-        self.button.clicked.connect(self.show_next_image)
+        self.export_button = QPushButton('Export to CSV')
+        self.export_button.setMaximumWidth(100)
+        self.export_button.clicked.connect(self.export_csv)
+
+        self.next_button = QPushButton('Next Image')
+        self.next_button.clicked.connect(self.show_next_image)
+
+        self.previous_button = QPushButton('Previous Image')
+        self.previous_button.clicked.connect(self.show_previous_image)
 
         self.new_bounding_boxes_view = QListWidget()
+        self.new_bounding_boxes_view.setMinimumWidth(200)
         self.new_bounding_boxes_view.itemSelectionChanged.connect(self.select_current_bounding_box)
         self.new_bounding_boxes_view.itemDoubleClicked.connect(self.delete_bounding_box)
 
+        self.existing_bounding_boxes_view = QListWidget()
+        self.existing_bounding_boxes_view.setMinimumWidth(200)
+        self.existing_bounding_boxes_view.itemSelectionChanged.connect(self.select_current_existing_bounding_box)
+        self.existing_bounding_boxes_view.itemDoubleClicked.connect(self.delete_existing_bounding_box)
+
         layout = QVBoxLayout()
-        layout.addWidget(self.header)
+        row0 = QHBoxLayout()
+        row0.addWidget(self.header)
+        row0.addWidget(self.export_button)
+        layout.addLayout(row0)
         row1 = QHBoxLayout()
         row1.addWidget(self.canvas)
-        row1.addWidget(self.new_bounding_boxes_view)
+        boxes_list_layout = QVBoxLayout()
+        boxes_list_layout.addWidget(self.new_bounding_boxes_view)
+        boxes_list_layout.addWidget(self.existing_bounding_boxes_view)
+        row1.addLayout(boxes_list_layout)
         layout.addLayout(row1)
         row2 = QHBoxLayout()
         row2.addWidget(self.toolbar)
-        row2.addWidget(self.button)
+        row2.addWidget(self.previous_button)
+        row2.addWidget(self.next_button)
         layout.addLayout(row2)
         self.setLayout(layout)
 
-        self.show_next_image()
+        self.set_initial_crop()
 
-    def get_image_generator(self):
-        directories_generator = process_probe_directories(Path(self.processing_directory))
-        for crops, crop_names, existing_bounding_boxes, probe_directory_name in directories_generator:
-            if probe_directory_name not in self.processed_folders:
-                for crop, crop_name, bounding_boxes in zip(crops, crop_names, existing_bounding_boxes):
-                    yield crop, crop_name, bounding_boxes, probe_directory_name
-                self.persist_new_bounding_boxes()
+    def process_probe_directory(self, probe_directory):
+        tif_path_string = f'{self.processing_directory}/{probe_directory}/images/{probe_directory}_map.tif'
+        tif_path = Path(glob.glob(tif_path_string)[0])
+        self.current_crops, self.current_crop_names, self.current_existing_bounding_boxes = crop_tif_map(tif_path)
+
+    def set_initial_crop(self):
+        self.process_probe_directory(self.current_probe_directory)
+        self.current_crop = self.current_crops[self.current_crop_index]
+        self.current_crop_name = self.current_crop_names[self.current_crop_index]
+        self.set_crop_bounding_boxes()
+        self.set_button_activation()
+        self.show_current_crop()
+
+    def set_next_crop(self):
+        current_folder_index = self.probe_directories.index(self.current_probe_directory)
+        if self.current_crop_index + 1 >= len(self.current_crops):
+            if current_folder_index + 1 < len(self.probe_directories):
+                self.current_probe_directory = self.probe_directories[current_folder_index + 1]
+                self.process_probe_directory(self.current_probe_directory)
+                self.current_crop_index = 0
+        else:
+            self.current_crop_index += 1
+        self.current_crop = self.current_crops[self.current_crop_index]
+        self.current_crop_name = self.current_crop_names[self.current_crop_index]
+        self.set_crop_bounding_boxes()
+        self.set_button_activation()
+
+    def set_previous_crop(self):
+        current_folder_index = self.probe_directories.index(self.current_probe_directory)
+        if self.current_crop_index - 1 < 0:
+            if current_folder_index > 0:
+                self.current_probe_directory = self.probe_directories[current_folder_index - 1]
+                self.process_probe_directory(self.current_probe_directory)
+                self.current_crop_index = len(self.current_crops) - 1
+        else:
+            self.current_crop_index -= 1
+        self.current_crop = self.current_crops[self.current_crop_index]
+        self.current_crop_name = self.current_crop_names[self.current_crop_index]
+        self.set_crop_bounding_boxes()
+        self.set_button_activation()
+
+    def set_button_activation(self):
+        if self.current_crop_index + 1 < len(self.current_crops) \
+                or self.probe_directories.index(self.current_probe_directory) + 1 < len(self.probe_directories):
+            self.next_button.setEnabled(True)
+        else:
+            self.next_button.setEnabled(False)
+
+        if self.current_crop_index > 0 or self.probe_directories.index(self.current_probe_directory) > 0:
+            self.previous_button.setEnabled(True)
+        else:
+            self.previous_button.setEnabled(False)
+
+    def set_crop_bounding_boxes(self):
+        try:
+            crop_path = self.build_crop_path()
+            self.current_crop_new_boxes = self.internal_boxes[crop_path][BoxesType.MANUAL.value]
+            self.current_crop_existing_boxes = self.internal_boxes[crop_path][BoxesType.EXISTING.value]
+        except KeyError:
+            self.current_crop_existing_boxes = self.current_existing_bounding_boxes[self.current_crop_index]
+            self.current_crop_new_boxes = []
+        existing_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_existing_boxes]
+        new_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_new_boxes]
+        self.existing_bounding_boxes_view.addItems(existing_labels)
+        self.new_bounding_boxes_view.addItems(new_labels)
+
+    def build_crop_path(self):
+        return f'{self.current_probe_directory}/images/{self.current_crop_name}'
 
     def select_current_bounding_box(self):
         index = self.new_bounding_boxes_view.currentRow()
-        self.annotate_image(highlighted_index=index)
+        self.annotate_image(highlighted_index=index, highlight_type=BoxesType.MANUAL)
+
+    def select_current_existing_bounding_box(self):
+        index = self.existing_bounding_boxes_view.currentRow()
+        self.annotate_image(highlighted_index=index, highlight_type=BoxesType.EXISTING)
 
     def delete_bounding_box(self, item):
         delete_dialog = QDialog()
@@ -152,7 +255,28 @@ class Window(QtWidgets.QWidget):
         if delete_dialog.exec():
             index = self.new_bounding_boxes_view.currentRow()
             self.new_bounding_boxes_view.takeItem(index)
-            del self.new_bounding_boxes[index]
+            del self.current_crop_new_boxes[index]
+            self.annotate_image()
+
+    def delete_existing_bounding_box(self, item):
+        delete_dialog = QDialog()
+        delete_dialog.setWindowTitle('Delete Bounding Box')
+
+        q_btn = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+
+        delete_dialog.buttonBox = QDialogButtonBox(q_btn)
+        delete_dialog.buttonBox.accepted.connect(delete_dialog.accept)
+        delete_dialog.buttonBox.rejected.connect(delete_dialog.reject)
+
+        delete_dialog.layout = QVBoxLayout()
+        message = QLabel(f'Delete Bounding Box: {item.text()}')
+        delete_dialog.layout.addWidget(message)
+        delete_dialog.layout.addWidget(delete_dialog.buttonBox)
+        delete_dialog.setLayout(delete_dialog.layout)
+        if delete_dialog.exec():
+            index = self.existing_bounding_boxes_view.currentRow()
+            self.existing_bounding_boxes_view.takeItem(index)
+            del self.current_crop_existing_boxes[index]
             self.annotate_image()
 
     def line_select_callback(self, click_event, release_event):
@@ -165,8 +289,8 @@ class Window(QtWidgets.QWidget):
             POLLEN_CLASSES
         )
         if ok:
-            new_bounding_box = (x1, y1, x2, y2, selected)
-            self.new_bounding_boxes.append(new_bounding_box)
+            new_bounding_box = [[x1, y1, x2, y2], selected]
+            self.current_crop_new_boxes.append(new_bounding_box)
             self.new_bounding_boxes_view.addItem(f'{selected} {x1, y1, x2, y2}')
             toggle_selector.RS.clear()
             self.annotate_image()
@@ -195,7 +319,7 @@ class Window(QtWidgets.QWidget):
             bbox=dict(facecolor=color, edgecolor=color)
         )
 
-    def annotate_image(self, highlighted_index=None):
+    def annotate_image(self, highlighted_index=None, highlight_type=None):
         self.figure.clear()
 
         self.figure.subplots_adjust(bottom=0, top=1, left=0, right=1)
@@ -203,17 +327,21 @@ class Window(QtWidgets.QWidget):
         self.ax = self.figure.add_subplot(111)
         self.ax.set_xticks([])
         self.ax.set_yticks([])
-        self.ax.imshow(self.crop, cmap='gray')
+        self.ax.imshow(self.current_crop, cmap='gray')
 
-        for current_bounding_box, current_label in self.bounding_boxes:
-            self.add_bounding_box(current_bounding_box, current_label, 'red', self.ax)
-        for index, row in enumerate(self.new_bounding_boxes):
-            if index is not None and index == highlighted_index:
+        for index, (current_bounding_box, current_label) in enumerate(self.current_crop_existing_boxes):
+            if index is not None and index == highlighted_index and highlight_type == BoxesType.EXISTING:
+                color = 'blue'
+            else:
+                color = 'red'
+            self.add_bounding_box(current_bounding_box, current_label, color, self.ax)
+        for index, row in enumerate(self.current_crop_new_boxes):
+            if index is not None and index == highlighted_index and highlight_type == BoxesType.MANUAL:
                 color = 'blue'
             else:
                 color = 'green'
-            current_bounding_box = row[:4]
-            current_label = row[4]
+            current_bounding_box = row[0]
+            current_label = row[1]
             self.add_bounding_box(current_bounding_box, current_label, color, self.ax)
 
         toggle_selector.RS = RectangleSelector(self.ax, self.line_select_callback,
@@ -226,42 +354,100 @@ class Window(QtWidgets.QWidget):
         self.canvas.draw()
 
     def show_next_image(self):
-        if len(self.new_bounding_boxes) > 0:
-            self.save_new_bounding_boxes()
-        try:
-            self.crop, self.crop_name, self.bounding_boxes, self.probe_directory_name = next(self.image_generator)
-            self.header.setText(f'{self.probe_directory_name}/images/{self.crop_name}')
-            self.annotate_image()
-        except StopIteration:
-            CloseDialog().exec()
-            sys.exit()
+        self.save_bounding_boxes()
+        # Skip images with no structure.
+        while True:
+            self.set_next_crop()
+            if self.current_crop.min() != self.current_crop.max():
+                break
+        self.persist_state()
+        self.show_current_crop()
 
-    def save_new_bounding_boxes(self):
-        label_info = pd.DataFrame(self.new_bounding_boxes)
-        self.new_bounding_boxes = []
+    def show_previous_image(self):
+        self.save_bounding_boxes()
+        # Skip images with no structure.
+        while True:
+            self.set_previous_crop()
+            if self.current_crop.min() != self.current_crop.max():
+                break
+
+        self.persist_state()
+        self.show_current_crop()
+
+    def show_current_crop(self):
+        self.header.setText(f'{self.current_probe_directory}/images/{self.current_crop_name}')
+        self.annotate_image()
+
+    def save_bounding_boxes(self):
+        self.existing_bounding_boxes_view.clear()
         self.new_bounding_boxes_view.clear()
-        label_info.insert(0, 'file', f'{self.probe_directory_name}/images/{self.crop_name}')
-        self.directory_label_info = pd.concat([self.directory_label_info, label_info])
+        boxes = {
+            BoxesType.MANUAL.value: self.current_crop_new_boxes,
+            BoxesType.EXISTING.value: self.current_crop_existing_boxes
+        }
+        self.internal_boxes[self.build_crop_path()] = boxes
 
-    def persist_new_bounding_boxes(self):
-        self.directory_label_info.to_csv(
-            f'{self.processing_directory}/additional_manual_annotations.csv',
-            mode='a',
-            header=False,
+    def persist_state(self):
+
+        state = {
+            'current_crop_index': self.current_crop_index,
+            'current_probe_directory': self.current_probe_directory,
+            'internal_boxes': self.internal_boxes
+        }
+        with open(f'{self.processing_directory}/{self.SAVED_STATE_FILE_NAME}', 'w') as file:
+            json.dump(state, file)
+
+    def load_state(self):
+        try:
+            with open(f'{self.processing_directory}/{self.SAVED_STATE_FILE_NAME}', 'r') as file:
+                saved_state = json.load(file)
+            self.current_crop_index = saved_state['current_crop_index']
+            self.current_probe_directory = saved_state['current_probe_directory']
+            self.internal_boxes = saved_state['internal_boxes']
+        except FileNotFoundError:
+            print('No previously save state exists, yet.')
+            self.current_crop_index = 0
+            self.current_probe_directory = self.probe_directories[0]
+            self.internal_boxes = {}
+
+    def export_csv(self):
+        export_directory, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export New Annotations",
+            "updated_annotations",
+            "CSV (*.csv)"
+        )
+        file_paths = []
+        bounding_boxes = []
+        label = []
+        updated = []
+        for probe_directory, boxes in self.internal_boxes.items():
+            for box in boxes[BoxesType.EXISTING.value]:
+                file_paths.append(probe_directory)
+                bounding_boxes.append(box[0])
+                label.append(box[1])
+                updated.append(False)
+            for box in boxes[BoxesType.MANUAL.value]:
+                file_paths.append(probe_directory)
+                bounding_boxes.append(box[0])
+                label.append(box[1])
+                updated.append(True)
+        bounding_boxes = np.array(bounding_boxes)
+        label_info = pd.DataFrame({
+            'file_path': file_paths,
+            'x1': bounding_boxes[:, 0] if len(bounding_boxes) > 0 else [],
+            'y1': bounding_boxes[:, 1] if len(bounding_boxes) > 0 else [],
+            'x2': bounding_boxes[:, 2] if len(bounding_boxes) > 0 else [],
+            'y2': bounding_boxes[:, 3] if len(bounding_boxes) > 0 else [],
+            'label': label,
+            'updated': updated,
+        })
+        label_info.to_csv(
+            export_directory,
+            mode='w',
+            header=True,
             index=False
         )
-        self.directory_label_info = pd.DataFrame()
-        self.processed_folders.append(self.probe_directory_name)
-        with open(f'{self.processing_directory}/{self.PROCESSED_FOLDERS_FILE_NAME}', 'w') as file:
-            json.dump(self.processed_folders, file)
-
-    def load_processed_folders(self):
-        try:
-            with open(f'{self.processing_directory}/{self.PROCESSED_FOLDERS_FILE_NAME}', 'r') as file:
-                return json.load(file)
-        except FileNotFoundError:
-            print('No processed folders file exists, yet.')
-            return []
 
 
 def toggle_selector(self, event):

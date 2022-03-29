@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from PyQt6 import QtWidgets
+from PyQt6 import QtWidgets, QtGui
 from PyQt6.QtWidgets import QApplication, QDialog, QPushButton, QVBoxLayout, QDialogButtonBox, QLabel, QInputDialog, \
     QHBoxLayout, QListWidget, QFileDialog, QMessageBox
 
@@ -354,6 +354,8 @@ class Window(QtWidgets.QWidget):
         self.canvas.draw()
 
     def show_next_image(self):
+        self.existing_bounding_boxes_view.clear()
+        self.new_bounding_boxes_view.clear()
         self.save_bounding_boxes()
         # Skip images with no structure.
         while True:
@@ -364,6 +366,8 @@ class Window(QtWidgets.QWidget):
         self.show_current_crop()
 
     def show_previous_image(self):
+        self.existing_bounding_boxes_view.clear()
+        self.new_bounding_boxes_view.clear()
         self.save_bounding_boxes()
         # Skip images with no structure.
         while True:
@@ -379,8 +383,6 @@ class Window(QtWidgets.QWidget):
         self.annotate_image()
 
     def save_bounding_boxes(self):
-        self.existing_bounding_boxes_view.clear()
-        self.new_bounding_boxes_view.clear()
         boxes = {
             BoxesType.MANUAL.value: self.current_crop_new_boxes,
             BoxesType.EXISTING.value: self.current_crop_existing_boxes
@@ -388,7 +390,6 @@ class Window(QtWidgets.QWidget):
         self.internal_boxes[self.build_crop_path()] = boxes
 
     def persist_state(self):
-
         state = {
             'current_crop_index': self.current_crop_index,
             'current_probe_directory': self.current_probe_directory,
@@ -448,6 +449,28 @@ class Window(QtWidgets.QWidget):
             header=True,
             index=False
         )
+
+    def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
+        self.save_bounding_boxes()
+        self.persist_state()
+        close_dialog = QDialog()
+        close_dialog.setWindowTitle('Close Application')
+
+        q_btn = QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+
+        close_dialog.buttonBox = QDialogButtonBox(q_btn)
+        close_dialog.buttonBox.accepted.connect(close_dialog.accept)
+        close_dialog.buttonBox.rejected.connect(close_dialog.reject)
+
+        close_dialog.layout = QVBoxLayout()
+        message = QLabel('Do you wish to close the annotation application?')
+        close_dialog.layout.addWidget(message)
+        close_dialog.layout.addWidget(close_dialog.buttonBox)
+        close_dialog.setLayout(close_dialog.layout)
+        if close_dialog.exec():
+            a0.accept()
+        else:
+            a0.ignore()
 
 
 def toggle_selector(self, event):

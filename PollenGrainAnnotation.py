@@ -1,7 +1,9 @@
 import glob
 import json
 import os
+import shutil
 import sys
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
@@ -82,9 +84,13 @@ class CloseDialog(QMessageBox):
 
 class Window(QtWidgets.QWidget):
     SAVED_STATE_FILE_NAME = 'saved_state.json'
+    BACKUP_DIRECTORY = 'backups'
+    BACKUP_INTERVAL = 100
 
     def __init__(self, parent=None):
         super(Window, self).__init__(parent)
+
+        self.backup_counter = 0
 
         self.current_probe_directory = None
         self.current_crops = None
@@ -100,7 +106,12 @@ class Window(QtWidgets.QWidget):
         self.internal_boxes = {}
 
         self.processing_directory = QFileDialog.getExistingDirectory(self)
-        self.probe_directories = sorted(next(os.walk(self.processing_directory))[1])
+        self.probe_directories = next(os.walk(self.processing_directory))[1]
+        try:
+            self.probe_directories.remove(self.BACKUP_DIRECTORY)
+        except ValueError:
+            print('No backup directory present.')
+        self.probe_directories = sorted(self.probe_directories)
         self.load_state()
 
         self.figure = plt.figure()
@@ -362,7 +373,9 @@ class Window(QtWidgets.QWidget):
             self.set_next_crop()
             if self.current_crop.min() != self.current_crop.max():
                 break
-        self.persist_state()
+        self.backup_counter += 1
+        backup = self.backup_counter % self.BACKUP_INTERVAL == 0
+        self.persist_state(backup)
         self.show_current_crop()
 
     def show_previous_image(self):
@@ -374,8 +387,9 @@ class Window(QtWidgets.QWidget):
             self.set_previous_crop()
             if self.current_crop.min() != self.current_crop.max():
                 break
-
-        self.persist_state()
+        self.backup_counter += 1
+        backup = self.backup_counter % self.BACKUP_INTERVAL == 0
+        self.persist_state(backup)
         self.show_current_crop()
 
     def show_current_crop(self):
@@ -389,13 +403,19 @@ class Window(QtWidgets.QWidget):
         }
         self.internal_boxes[self.build_crop_path()] = boxes
 
-    def persist_state(self):
+    def persist_state(self, backup=False):
         state = {
             'current_crop_index': self.current_crop_index,
             'current_probe_directory': self.current_probe_directory,
             'internal_boxes': self.internal_boxes
         }
-        with open(f'{self.processing_directory}/{self.SAVED_STATE_FILE_NAME}', 'w') as file:
+        saved_state_file = Path(f'{self.processing_directory}/{self.SAVED_STATE_FILE_NAME}')
+        if backup:
+            backup_directory = Path(f'{self.processing_directory}/{self.BACKUP_DIRECTORY}')
+            backup_directory.mkdir(exist_ok=True)
+            saved_state_backup_file = backup_directory / f'{datetime.now().timestamp()}_{self.SAVED_STATE_FILE_NAME}'
+            shutil.copy(saved_state_file, saved_state_backup_file)
+        with open(saved_state_file, 'w') as file:
             json.dump(state, file)
 
     def load_state(self):
@@ -452,7 +472,7 @@ class Window(QtWidgets.QWidget):
 
     def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
         self.save_bounding_boxes()
-        self.persist_state()
+        self.persist_state(backup=True)
         close_dialog = QDialog()
         close_dialog.setWindowTitle('Close Application')
 

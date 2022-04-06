@@ -461,6 +461,7 @@ class Window(QtWidgets.QWidget):
             self.internal_boxes = {}
 
     def export_csv(self):
+        self.save_bounding_boxes()
         export_directory, _ = QFileDialog.getSaveFileName(
             self,
             "Export New Annotations",
@@ -471,17 +472,21 @@ class Window(QtWidgets.QWidget):
         bounding_boxes = []
         label = []
         updated = []
+        skipped = []
         for probe_directory, boxes in self.internal_boxes.items():
+            skip = boxes['skip']
             for box in boxes[BoxesType.EXISTING.value]:
                 file_paths.append(probe_directory)
                 bounding_boxes.append(box[0])
                 label.append(box[1])
                 updated.append(False)
+                skipped.append(skip)
             for box in boxes[BoxesType.MANUAL.value]:
                 file_paths.append(probe_directory)
                 bounding_boxes.append(box[0])
                 label.append(box[1])
                 updated.append(True)
+                skipped.append(skip)
         bounding_boxes = np.array(bounding_boxes)
         label_info = pd.DataFrame({
             'file_path': file_paths,
@@ -491,6 +496,7 @@ class Window(QtWidgets.QWidget):
             'y2': bounding_boxes[:, 3] if len(bounding_boxes) > 0 else [],
             'label': label,
             'updated': updated,
+            'skipped': skipped,
         })
         label_info.to_csv(
             export_directory,

@@ -99,6 +99,7 @@ class Window(QtWidgets.QWidget):
 
         self.current_crop_index = 0
         self.current_crop = None
+        self.current_crop_skip = None
         self.current_crop_name = None
         self.current_crop_existing_boxes = None
         self.current_crop_new_boxes = None
@@ -134,6 +135,9 @@ class Window(QtWidgets.QWidget):
         self.export_button.setMaximumWidth(100)
         self.export_button.clicked.connect(self.export_csv)
 
+        self.skip_button = QPushButton('Skip Image')
+        self.skip_button.clicked.connect(self.skip_image)
+
         self.next_button = QPushButton('Next Image')
         self.next_button.clicked.connect(self.show_next_image)
 
@@ -166,6 +170,7 @@ class Window(QtWidgets.QWidget):
         row2.addWidget(self.toolbar)
         row2.addWidget(self.previous_button)
         row2.addWidget(self.next_button)
+        row2.addWidget(self.skip_button)
         layout.addLayout(row2)
         self.setLayout(layout)
 
@@ -191,12 +196,15 @@ class Window(QtWidgets.QWidget):
                 self.current_probe_directory = self.probe_directories[current_folder_index + 1]
                 self.process_probe_directory(self.current_probe_directory)
                 self.current_crop_index = 0
+            else:
+                return False
         else:
             self.current_crop_index += 1
         self.current_crop = self.current_crops[self.current_crop_index]
         self.current_crop_name = self.current_crop_names[self.current_crop_index]
         self.set_crop_bounding_boxes()
         self.set_button_activation()
+        return True
 
     def set_previous_crop(self):
         current_folder_index = self.probe_directories.index(self.current_probe_directory)
@@ -205,19 +213,24 @@ class Window(QtWidgets.QWidget):
                 self.current_probe_directory = self.probe_directories[current_folder_index - 1]
                 self.process_probe_directory(self.current_probe_directory)
                 self.current_crop_index = len(self.current_crops) - 1
+            else:
+                return False
         else:
             self.current_crop_index -= 1
         self.current_crop = self.current_crops[self.current_crop_index]
         self.current_crop_name = self.current_crop_names[self.current_crop_index]
         self.set_crop_bounding_boxes()
         self.set_button_activation()
+        return True
 
     def set_button_activation(self):
         if self.current_crop_index + 1 < len(self.current_crops) \
                 or self.probe_directories.index(self.current_probe_directory) + 1 < len(self.probe_directories):
             self.next_button.setEnabled(True)
+            self.skip_button.setEnabled(True)
         else:
             self.next_button.setEnabled(False)
+            self.skip_button.setEnabled(False)
 
         if self.current_crop_index > 0 or self.probe_directories.index(self.current_probe_directory) > 0:
             self.previous_button.setEnabled(True)
@@ -229,13 +242,11 @@ class Window(QtWidgets.QWidget):
             crop_path = self.build_crop_path()
             self.current_crop_new_boxes = self.internal_boxes[crop_path][BoxesType.MANUAL.value]
             self.current_crop_existing_boxes = self.internal_boxes[crop_path][BoxesType.EXISTING.value]
+            self.current_crop_skip = self.internal_boxes[crop_path]['skip']
         except KeyError:
             self.current_crop_existing_boxes = self.current_existing_bounding_boxes[self.current_crop_index]
             self.current_crop_new_boxes = []
-        existing_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_existing_boxes]
-        new_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_new_boxes]
-        self.existing_bounding_boxes_view.addItems(existing_labels)
-        self.new_bounding_boxes_view.addItems(new_labels)
+            self.current_crop_skip = False
 
     def build_crop_path(self):
         return f'{self.current_probe_directory}/images/{self.current_crop_name}'
@@ -364,42 +375,60 @@ class Window(QtWidgets.QWidget):
         self.canvas.mpl_connect('key_press_event', toggle_selector)
         self.canvas.draw()
 
+    def skip_image(self):
+        self.current_crop_skip = True
+        self.show_next_image()
+
     def show_next_image(self):
+        self._show_next_image()
+
+    def _show_next_image(self, previous_button_enabled=True):
         self.existing_bounding_boxes_view.clear()
         self.new_bounding_boxes_view.clear()
         self.save_bounding_boxes()
         # Skip images with no structure.
-        while True:
-            self.set_next_crop()
-            if self.current_crop.min() != self.current_crop.max():
+        while self.set_next_crop():
+            if not self.current_crop_skip and self.current_crop.min() != self.current_crop.max():
+                self.show_current_crop()
                 break
-        self.backup_counter += 1
-        backup = self.backup_counter % self.BACKUP_INTERVAL == 0
-        self.persist_state(backup)
-        self.show_current_crop()
+        if self.current_crop_skip or self.current_crop.min() == self.current_crop.max():
+            self._show_previous_image(False)
+        self.previous_button.setEnabled(previous_button_enabled)
 
     def show_previous_image(self):
+        self._show_previous_image()
+
+    def _show_previous_image(self, next_button_enabled=True):
         self.existing_bounding_boxes_view.clear()
         self.new_bounding_boxes_view.clear()
         self.save_bounding_boxes()
         # Skip images with no structure.
-        while True:
-            self.set_previous_crop()
-            if self.current_crop.min() != self.current_crop.max():
+        while self.set_previous_crop():
+            if not self.current_crop_skip and self.current_crop.min() != self.current_crop.max():
+                self.show_current_crop()
                 break
+        if self.current_crop_skip or self.current_crop.min() == self.current_crop.max():
+            self._show_next_image(False)
+        self.next_button.setEnabled(next_button_enabled)
+        self.skip_button.setEnabled(next_button_enabled)
+
+    def show_current_crop(self):
+        existing_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_existing_boxes]
+        new_labels = [f'{box[1]} {tuple(box[0])}' for box in self.current_crop_new_boxes]
+        self.existing_bounding_boxes_view.addItems(existing_labels)
+        self.new_bounding_boxes_view.addItems(new_labels)
         self.backup_counter += 1
         backup = self.backup_counter % self.BACKUP_INTERVAL == 0
         self.persist_state(backup)
-        self.show_current_crop()
 
-    def show_current_crop(self):
         self.header.setText(f'{self.current_probe_directory}/images/{self.current_crop_name}')
         self.annotate_image()
 
     def save_bounding_boxes(self):
         boxes = {
             BoxesType.MANUAL.value: self.current_crop_new_boxes,
-            BoxesType.EXISTING.value: self.current_crop_existing_boxes
+            BoxesType.EXISTING.value: self.current_crop_existing_boxes,
+            'skip': self.current_crop_skip,
         }
         self.internal_boxes[self.build_crop_path()] = boxes
 

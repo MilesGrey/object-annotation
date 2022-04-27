@@ -19,6 +19,20 @@ def check_pmon_number():
     return True
 
 
+def check_tif_files():
+    no_counter = 0
+    probe_directories = glob.glob('/Volumes/Samsung_T5/2016/*')
+    for probe_directory in probe_directories:
+        tif_files = glob.glob(f'{probe_directory}/images/*.tif')
+        if not tif_files:
+            print(f'{probe_directory} does not contain tif image.')
+            no_counter += 1
+        else:
+            print(f'{probe_directory} contains.')
+    print(f'{no_counter} missing tif files.')
+    return True
+
+
 def get_all_classes():
     weird_labels = [
         'BetulaCarpinus',
@@ -125,5 +139,7 @@ def concat_single_csv_files():
     aggregated.to_csv(f'/Volumes/Samsung_T5/UNIKAT_2018_PART_1/{directory}/csv/{directory}_01_class.csv', sep=';', index=False)
 
 
-get_all_classes()
+# get_all_classes()
 # concat_single_csv_files()
+check_tif_files()
+

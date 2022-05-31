@@ -144,6 +144,11 @@ class Window(QtWidgets.QWidget):
         self.previous_button = QPushButton('Previous Image')
         self.previous_button.clicked.connect(self.show_previous_image)
 
+        self.folder_selection_view = QListWidget()
+        self.folder_selection_view.setMinimumWidth(200)
+        self.folder_selection_view.setMaximumWidth(200)
+        self.folder_selection_view.itemDoubleClicked.connect(self.select_current_folder)
+
         self.new_bounding_boxes_view = QListWidget()
         self.new_bounding_boxes_view.setMinimumWidth(200)
         self.new_bounding_boxes_view.setMaximumWidth(200)
@@ -157,26 +162,45 @@ class Window(QtWidgets.QWidget):
         self.existing_bounding_boxes_view.itemDoubleClicked.connect(self.delete_existing_bounding_box)
 
         layout = QVBoxLayout()
+
         row0 = QHBoxLayout()
         row0.addWidget(self.header)
         row0.addWidget(self.export_button)
         layout.addLayout(row0)
+
         row1 = QHBoxLayout()
+
+        folder_selection_layout = QVBoxLayout()
+        folder_selection_layout.addWidget(QLabel('Folder selection:'))
+        folder_selection_layout.addWidget(self.folder_selection_view)
+
+        row1.addLayout(folder_selection_layout)
         row1.addWidget(self.canvas)
         boxes_list_layout = QVBoxLayout()
+        boxes_list_layout.addWidget(QLabel('New and updated bounding boxes:'))
         boxes_list_layout.addWidget(self.new_bounding_boxes_view)
+        boxes_list_layout.addWidget(QLabel('Existing bounding boxes:'))
         boxes_list_layout.addWidget(self.existing_bounding_boxes_view)
         row1.addLayout(boxes_list_layout)
         layout.addLayout(row1)
+
         row2 = QHBoxLayout()
         row2.addWidget(self.toolbar)
         row2.addWidget(self.previous_button)
         row2.addWidget(self.next_button)
         row2.addWidget(self.skip_button)
         layout.addLayout(row2)
+
         self.setLayout(layout)
 
+        self.set_folder_list()
         self.set_initial_crop()
+
+    def set_folder_list(self):
+        self.folder_selection_view.addItems(self.probe_directories)
+
+    def select_current_folder(self, item):
+        self._show_next_image(from_folder=item.text())
 
     def process_probe_directory(self, probe_directory):
         tif_path_string = f'{self.processing_directory}/{probe_directory}/images/{probe_directory}_map.tif'
@@ -199,7 +223,10 @@ class Window(QtWidgets.QWidget):
         except IndexError:
             self.show_next_image()
 
-    def set_next_crop(self):
+    def set_next_crop(self, force_process_probe_directory=False):
+        if force_process_probe_directory:
+            self.process_probe_directory(self.current_probe_directory)
+
         current_folder_index = self.probe_directories.index(self.current_probe_directory)
         if self.current_crop_index + 1 >= len(self.current_crops):
             if current_folder_index + 1 < len(self.probe_directories):
@@ -392,13 +419,17 @@ class Window(QtWidgets.QWidget):
     def show_next_image(self):
         self._show_next_image()
 
-    def _show_next_image(self, previous_button_enabled=True):
+    def _show_next_image(self, previous_button_enabled=True, from_folder=None):
         self.existing_bounding_boxes_view.clear()
         self.new_bounding_boxes_view.clear()
         self.save_bounding_boxes()
         try:
+            if from_folder is not None:
+                self.current_crop_index = -1
+                self.current_probe_directory = from_folder
+
             # Skip images with no structure.
-            while self.set_next_crop():
+            while self.set_next_crop(force_process_probe_directory=from_folder is not None):
                 if not self.current_crop_skip and self.current_crop.min() != self.current_crop.max():
                     self.show_current_crop()
                     break

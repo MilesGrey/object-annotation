@@ -373,15 +373,7 @@ class Window(QtWidgets.QWidget):
             edgecolor=color,
             facecolor='none'
         )
-        label_y = bounding_box[1]
         ax.add_patch(rectangle)
-        ax.text(
-            bounding_box[0],
-            label_y,
-            label,
-            color='white',
-            bbox=dict(facecolor=color, edgecolor=color)
-        )
 
     def annotate_image(self, highlighted_index=None, highlight_type=None):
         self.figure.clear()

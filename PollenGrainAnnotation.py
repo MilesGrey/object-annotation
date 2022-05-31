@@ -32,7 +32,7 @@ POLLEN_CLASSES = [
     'Fagus',
     'Fraxinus',
     'Juglans',
-    'Larix'
+    'Larix',
     'Papaveraceae',
     'Picea',
     'Pinaceae',
@@ -146,11 +146,13 @@ class Window(QtWidgets.QWidget):
 
         self.new_bounding_boxes_view = QListWidget()
         self.new_bounding_boxes_view.setMinimumWidth(200)
+        self.new_bounding_boxes_view.setMaximumWidth(200)
         self.new_bounding_boxes_view.itemSelectionChanged.connect(self.select_current_bounding_box)
         self.new_bounding_boxes_view.itemDoubleClicked.connect(self.delete_bounding_box)
 
         self.existing_bounding_boxes_view = QListWidget()
         self.existing_bounding_boxes_view.setMinimumWidth(200)
+        self.existing_bounding_boxes_view.setMaximumWidth(200)
         self.existing_bounding_boxes_view.itemSelectionChanged.connect(self.select_current_existing_bounding_box)
         self.existing_bounding_boxes_view.itemDoubleClicked.connect(self.delete_existing_bounding_box)
 

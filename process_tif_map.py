@@ -33,13 +33,14 @@ def process_probe_directories(
 
 def crop_tif_map(
         tif_path: Path,
+        label_end: int,
 ):
     tif_map = cv2.imread(str(tif_path), cv2.IMREAD_UNCHANGED)
 
     vertical_tiles = tif_map.shape[0] // IMAGE_HEIGHT
     vertical_tif_labels = range(23, 23 - vertical_tiles, -1)
     horizontal_tiles = tif_map.shape[1] // IMAGE_WIDTH
-    horizontal_tif_labels = range(14, 14 - horizontal_tiles, -1)
+    horizontal_tif_labels = range(label_end, label_end - horizontal_tiles, -1)
     crops = []
     crop_names = []
     existing_bounding_boxes = []

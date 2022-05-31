@@ -206,7 +206,12 @@ class Window(QtWidgets.QWidget):
         tif_path_string = f'{self.processing_directory}/{probe_directory}/images/{probe_directory}_map.tif'
         try:
             tif_path = Path(glob.glob(tif_path_string)[0])
-            self.current_crops, self.current_crop_names, self.current_existing_bounding_boxes = crop_tif_map(tif_path)
+
+            fast_syns = glob.glob(f'{self.processing_directory}/{probe_directory}/images/*FAST.SYN._FP.png')
+            firsts = [str(Path(s).name)[12:14] for s in fast_syns]
+            first_end = int(max(firsts))
+
+            self.current_crops, self.current_crop_names, self.current_existing_bounding_boxes = crop_tif_map(tif_path, first_end)
         except IndexError:
             self.current_crops = []
             self.current_crop_names = []
